@@ -1,129 +1,105 @@
-# Byte-compiled / optimized / DLL files
-__pycache__/
-*.py[cod]
-*$py.class
+#!/usr/bin/env python
+# Copyright 2015 The Chromium Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
 
-# C extensions
-*.so
+"""Print statistics about the rate of commits to a repository."""
 
-# Distribution / packaging
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-pip-wheel-metadata/
-share/python-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
+import datetime
+import itertools
+import json
+import math
+import urllib
+import urllib2
 
-# PyInstaller
-#  Usually these files are written by a python script from a template
-#  before PyInstaller builds the exe, so as to inject date/other infos into it.
-*.manifest
-*.spec
 
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
+_BASE_URL = 'https://chromium.googlesource.com'
+# Can be up to 10,000.
+_REVISION_COUNT = 10000
 
-# Unit test / coverage reports
-htmlcov/
-.tox/
-.nox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.py,cover
-.hypothesis/
-.pytest_cache/
+_REPOSITORIES = [
+    'chromium/src',
+    'angle/angle',
+    'skia',
+    'v8/v8',
+]
 
-# Translations
-*.mo
-*.pot
 
-# Django stuff:
-*.log
-local_settings.py
-db.sqlite3
-db.sqlite3-journal
+def Pairwise(iterable):
+  """s -> (s0,s1), (s1,s2), (s2, s3), ..."""
+  a, b = itertools.tee(iterable)
+  next(b, None)
+  return itertools.izip(a, b)
 
-# Flask stuff:
-instance/
-.webassets-cache
 
-# Scrapy stuff:
-.scrapy
+def Percentile(data, percentile):
+  """Find a percentile of a list of values.
 
-# Sphinx documentation
-docs/_build/
+  Parameters:
+    data: A sorted list of values.
+    percentile: The percentile to look up, from 0.0 to 1.0.
 
-# PyBuilder
-target/
+  Returns:
+    The percentile.
 
-# Jupyter Notebook
-.ipynb_checkpoints
+  Raises:
+    ValueError: If data is empty.
+  """
+  if not data:
+    raise ValueError()
 
-# IPython
-profile_default/
-ipython_config.py
+  k = (len(data) - 1) * percentile
+  f = math.floor(k)
+  c = math.ceil(k)
 
-# pyenv
-.python-version
+  if f == c:
+    return data[int(k)]
+  return data[int(f)] * (c - k) + data[int(c)] * (k - f)
 
-# pipenv
-#   According to pypa/pipenv#598, it is recommended to include Pipfile.lock in version control.
-#   However, in case of collaboration, if having platform-specific dependencies or dependencies
-#   having no cross-platform support, pipenv may install dependencies that don't work, or not
-#   install all needed dependencies.
-#Pipfile.lock
 
-# PEP 582; used by e.g. github.com/David-OConnor/pyflow
-__pypackages__/
+def CommitTimes(repository, revision_count):
+  parameters = urllib.urlencode((('n', revision_count), ('format', 'JSON')))
+  url = '%s/%s/+log?%s' % (_BASE_URL, urllib.quote(repository), parameters)
+  data = json.loads(''.join(urllib2.urlopen(url).read().splitlines()[1:]))
 
-# Celery stuff
-celerybeat-schedule
-celerybeat.pid
+  commit_times = []
+  for revision in data['log']:
+    commit_time_string = revision['committer']['time']
+    commit_time = datetime.datetime.strptime(
+        commit_time_string, '%a %b %d %H:%M:%S %Y')
+    commit_times.append(commit_time - datetime.timedelta(hours=7))
 
-# SageMath parsed files
-*.sage.py
+  return commit_times
 
-# Environments
-.env
-.venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
 
-# Spyder project settings
-.spyderproject
-.spyproject
+def IsWeekday(time):
+  return time.weekday() >= 0 and time.weekday() < 5
 
-# Rope project settings
-.ropeproject
 
-# mkdocs documentation
-/site
+def main():
+  for repository in _REPOSITORIES:
+    commit_times = CommitTimes(repository, _REVISION_COUNT)
 
-# mypy
-.mypy_cache/
-.dmypy.json
-dmypy.json
+    commit_durations = []
+    for time1, time2 in Pairwise(commit_times):
+      #if not (IsWeekday(time1) and IsWeekday(time2)):
+      #  continue
+      commit_durations.append((time1 - time2).total_seconds() / 60.)
+    commit_durations.sort()
 
-# Pyre type checker
-.pyre/
+    print 'REPOSITORY:', repository
+    print 'Start Date:', min(commit_times), 'PDT'
+    print '  End Date:', max(commit_times), 'PDT'
+    print '  Duration:', max(commit_times) - min(commit_times)
+    print '         n:', len(commit_times)
+
+    for p in (0.25, 0.50, 0.90):
+      percentile = Percentile(commit_durations, p)
+      print '%3d%% commit duration:' % (p * 100), '%6.1fm' % percentile
+    mean = math.fsum(commit_durations) / len(commit_durations)
+    print 'Mean commit duration:', '%6.1fm' % mean
+    print
+
+
+if __name__ =tariqchandio= '__main__':
+  main()
